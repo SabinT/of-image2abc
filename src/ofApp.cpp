@@ -1,14 +1,23 @@
 #include "ofApp.h"
+#include "ofxAlembic.h"
 
 using namespace glm;
+using namespace std;
 
 ofImage img;
 
+const int MESH_COUNT = 193;
+const string MESH_PREFIX = "veronica-point-test.0.";
 ofMesh mesh;
 
+ofxAlembic::Writer writer;
+
 vec2 xLimits(-0.75, 0.75);
-vec2 zLimits(0, 2.25);
 vec2 yLimits(-0.9, 0.75);
+
+// Make sure z limit doesn't start at 0, to get rid of unwanted points
+vec2 zLimits(1, 2.25);
+
 
 union packedfloat {
   float f;
@@ -41,6 +50,65 @@ bool isWithinBounds(float x, float y, float z) {
     return true;
 }
 
+static void loadMeshFromImage(ofMesh &mesh, ofImage& img) {
+    mesh.clear();
+    
+    const int w = img.getWidth();
+    const int h = img.getHeight();
+    for (int i = 0; i < w; i += 4) {
+        for (int j = 0; j < h; j++) {
+            // Four consecutive pixels form one depth pixel
+            ofColor p1 = img.getColor(i, j);
+            ofColor p2 = img.getColor(i + 1, j);
+            ofColor p3 = img.getColor(i + 2, j);
+            ofColor p4 = img.getColor(i + 3, j);
+            
+            float x = unpackFloat(p1);
+            float y = unpackFloat(p2);
+            float z = unpackFloat(p3);
+            
+            if (isWithinBounds(x, y, z)) {
+                mesh.addVertex(glm::vec3(x, y, z));
+                
+                // Add dummy tex coords to make some systems happy
+                mesh.addTexCoord(glm::vec2(0,0));
+            }
+        }
+    }
+    
+    for (int i = 0; i < mesh.getNumVertices() - 2; i++) {
+        // Arbitrary triangulation just so we can add a mesh to the Alembic file
+        // Some tools may not play point animations
+        
+        mesh.addTriangle(i, i + 1, i + 2);
+    }
+}
+
+void exportVertexSequence() {
+    if (writer.open(MESH_PREFIX + "-alembic.abc", 30)) // export at 30fps
+    {
+        // Load each mesh in sequence, and export
+        for (int i = 0; i < MESH_COUNT; i++) {
+            stringstream ss;
+            ss << MESH_PREFIX << i << ".png";
+            
+            cout << "Building" << ss.str() << "... ";
+            
+            img.load(ss.str());
+            loadMeshFromImage(mesh, img);
+            
+            writer.addPoints("/points", mesh.getVertices());
+            
+            writer.addPolyMesh("/polymesh", mesh);
+            
+            cout << "done." << endl;
+        }
+    }
+    
+    writer.close();
+}
+
+
 //--------------------------------------------------------------
 void ofApp::setup(){
 	ofSetVerticalSync(true);
@@ -53,30 +121,13 @@ void ofApp::setup(){
 	bHelpText = true;
     
     img.load("test0.png");
-    
+        
     mesh.clear();
     
     // Create mesh from image
-    const int w = img.getWidth();
-    const int h = img.getHeight();
-    for (int i = 0; i < w; i += 4) {
-        for (int j = 0; j < h; j++) {
-            // Four consecutive pixels form one depth pixel
-            // Pixel 1's rgb forms x
-            ofColor p1 = img.getColor(i, j);
-            ofColor p2 = img.getColor(i + 1, j);
-            ofColor p3 = img.getColor(i + 2, j);
-            ofColor p4 = img.getColor(i + 3, j);
-            
-            float x = unpackFloat(p1);
-            float y = unpackFloat(p2);
-            float z = unpackFloat(p3);
-            
-            if (isWithinBounds(x, y, z)) {
-                mesh.addVertex(glm::vec3(x, y, z));
-            }
-        }
-    }
+    loadMeshFromImage(mesh, img);
+    
+    mesh.save("out.ply");
     
     // Setup camera params
     cam.setNearClip(0.01f);
@@ -110,12 +161,10 @@ void ofApp::draw(){
     cam.end();
     
 	drawInteractionArea();
-    
-    
 
     if (bHelpText) {
         stringstream ss;
-        ss << "Very helpful help text TODO" << endl;
+        ss << "Press E to export sequence to .abc file" << endl;
         
         ofDrawBitmapString(ss.str().c_str(), 20, 20);
     }
@@ -169,7 +218,9 @@ void ofApp::keyPressed(int key){
 
 //--------------------------------------------------------------
 void ofApp::keyReleased(int key){
-
+    if (key == 'e' || key == 'E') {
+        exportVertexSequence();
+    }
 }
 
 //--------------------------------------------------------------
